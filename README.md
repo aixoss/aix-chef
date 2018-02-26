@@ -506,6 +506,11 @@ In some cases a metadata operation is performed to discover the oslevel build nu
 
 The location directory is automatically created if it does not exist.
 
+The following user process resource limits are recommended to run a suma recipe:
+- fsize = -1
+- nofiles = 20000 (or greater)
+- data = -1
+
 The NIM lpp_source resource is automatically created if needed. It meets the following requirement. Name contains build number and ends with the type of resource:
 
 - 7100-04-00-0000-lpp_source
