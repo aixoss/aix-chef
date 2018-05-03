@@ -350,7 +350,7 @@ def nim_updateios(vios, cmd_s)
     wait_thr.value # Process::Status object returned.
   end
   put_info("Finish updating vios '#{vios}'.")
-
+  put_info('With commit operation.') if cmd_s.include?('updateios_flags=-commit')
   raise ViosUpdateError, "Failed to perform NIM updateios operation on '#{vios}', see above error!" unless exit_status.success?
 end
 
@@ -679,8 +679,15 @@ action :update do
         # first find the right hdisk and check if we can perform the copy
         ret = 0
 
+        rootvg_info = {}
         begin
-          ret = vio_server.find_valid_altdisk(nim_vios, vios_list, vios_key, targets_status, altdisk_hash, new_resource.disk_size_policy)
+
+          # check if the rootvg is mirrored
+          vios_list.each do |vios|
+            rootvg_info[vios] = vio_server.check_rootvg(nim_vios, vios)
+          end
+
+          ret = vio_server.find_valid_altdisk(nim_vios, vios_list, vios_key, rootvg_info, targets_status, altdisk_hash, new_resource.disk_size_policy)
           next if ret == 1
         rescue AltDiskFindError => e
           put_error(e.message)
@@ -692,6 +699,27 @@ action :update do
         vios_list.each do |vios|
           converge_by("nim: perform alt_disk_install for vios '#{vios}' on disk '#{altdisk_hash[vios]}'\n") do
             begin
+              # unmirror the vg if necessary
+              # check mirror
+              nb_copies = rootvg_info[vios]['copy_dict'].keys.length
+              put_info("rootvg_info = '#{rootvg_info}'\n")
+              if nb_copies > 1
+                begin
+                  nim.perform_unmirror(nim_vios, vios, 'rootvg')
+                rescue UnMirrorError => e
+                  # ADD status
+                  STDERR.puts e.message
+                  log_warn("[#{vios}] #{e.message}")
+                  targets_status[vios_key] = if vios == vios1
+                                               'FAILURE-ALTDCOPY1'
+                                             else
+                                               'FAILURE-ALTDCOPY2'
+                                             end
+                  put_info("Finish NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
+                  break
+                end
+              end
+
               put_info("Start NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}'.")
               nim.perform_altdisk_install(vios, 'rootvg', altdisk_hash[vios])
             rescue NimAltDiskInstallError => e
@@ -736,6 +764,26 @@ action :update do
                                            'FAILURE-ALTDCOPY2'
                                          end
             end
+
+            # mirror the vg if necessary
+            nb_copies = rootvg_info[vios]['copy_dict'].keys.length
+            if nb_copies > 1
+              log_debug('mirror')
+              begin
+                nim.perform_mirror(nim_vios, vios, 'rootvg', rootvg_info)
+              rescue MirrorError => e
+                # ADD status
+                STDERR.puts e.message
+                log_warn("[#{vios}] #{e.message}")
+                targets_status[vios_key] = if vios == vios1
+                                             'FAILURE-ALTDCOPY1'
+                                           else
+                                             'FAILURE-ALTDCOPY2'
+                                           end
+                put_info("Finish NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
+                break
+              end
+            end
             put_info("Finish NIM alt_disk_install operation for disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
             break unless ret == 0
           end
@@ -743,7 +791,6 @@ action :update do
       else
         put_warn("Alternate disk copy for #{vios_key} skipped: time limit '#{new_resource.time_limit}' reached")
       end
-
       log_info("Alternate disk copy status for #{vios_key}: #{targets_status[vios_key]}")
     end # altdisk_copy
 
@@ -823,6 +870,16 @@ action :update do
           cmd_to_run = cmd + vios
           converge_by("nim: perform NIM updateios for vios '#{vios}'\n") do
             begin
+              # Commit applied lpps if necessay
+              if new_resource.preview.eql?('no')
+                put_info("Start Autocommit before NIM updateios for vios '#{vios}'.")
+                cmd_commit = "/usr/sbin/nim -o updateios -a updateios_flags=-commit -a filesets=all '#{vios}'"
+                begin
+                  nim_updateios(vios, cmd_commit)
+                rescue ViosUpdateError => e
+                  put_error(e.message)
+                end
+              end
               put_info("Start NIM updateios for vios '#{vios}'.")
               nim_updateios(vios, cmd_to_run)
             rescue ViosUpdateError => e
