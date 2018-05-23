@@ -229,6 +229,9 @@ module AIX
     class NimHmcInfoError < StandardError
     end
 
+    class NimCecsInfoError < StandardError
+    end
+
     class NimLparInfoError < StandardError
     end
 
@@ -603,6 +606,55 @@ module AIX
       end
 
       # -----------------------------------------------------------------
+      # Get the list of the cec defined on the nim master and gat their serial number.
+      #
+      #    return a dic with cecs info:
+      #    the name of the cec objects defined on the nim master
+      #    and their associated CEC serial number value
+      #    raise NimCecsInfoError in case of error
+      # -----------------------------------------------------------------
+      def get_cecs_info
+        info_hash = {}
+        obj_key = ''
+        cmd_s = '/usr/sbin/lsnim -t cec -l'
+        log_debug("get_cecs_info: #{cmd_s}")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, stderr, wait_thr|
+          stderr.each_line do |line|
+            STDERR.puts line
+            log_info("[STDERR] #{line.chomp}")
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            raise NimCecsInfoError, "Error: Command \"#{cmd_s}\" returns above error!"
+          end
+
+          stdout.each_line do |line|
+            log_info("[STDOUT] #{line.chomp}")
+            # lpar name
+            if line =~ /^(\S+):/
+              obj_key = Regexp.last_match(1)
+              info_hash[obj_key] = {}
+              next
+            end
+            # cec serial number
+            if line =~ /^\s+serial\s+=\s+(.*)$/
+              info_hash[obj_key]['serial'] = Regexp.last_match(1)
+              next
+            end
+          end
+        end
+
+        log_info('CECs information:')
+        info_hash.keys.each do |key|
+          log_info(key.to_s)
+          info_hash[key].keys.each do |k|
+            log_info("  #{k}: #{info_hash[key][k]}")
+          end
+        end
+        info_hash
+      end
+
+      # -----------------------------------------------------------------
       # Get the hmc info on the nim master
       #
       #    return a dic with hmc info
@@ -699,8 +751,7 @@ module AIX
             end
             # Cstate
             if line =~ /^\s+Cstate\s+=\s+(.*)$/
-              cstate = Regexp.last_match(1)
-              info_hash[obj_key]['cstate'] = cstate
+              info_hash[obj_key]['cstate'] = Regexp.last_match(1)
               next
             end
 

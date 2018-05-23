@@ -176,7 +176,7 @@ def vios_health_init(nim_vios, hmc_id, hmc_ip)
             put_warn("Health Check: unexpected script output: consecutive Managed System UUID: '#{line.strip}'")
           end
           cec_uuid = Regexp.last_match(1)
-          cec_serial = Regexp.last_match(2).tr('*', '_')
+          cec_serial = Regexp.last_match(2)
 
           log_info("Health Check: init found managed system: cec_uuid:'#{cec_uuid}', cec_serial:'#{cec_serial}'")
           next
@@ -193,7 +193,7 @@ def vios_health_init(nim_vios, hmc_id, hmc_ip)
       end
 
       # new vios partition but skip if lparid is not found.
-      next if line =~ /^\s+(\S+)\s+Not found$/
+      next if line =~ /^\s+(\S+)\s+none$/
 
       # regular new vios partition
       if line =~ /^\s+(\S+)\s+(\S+)$/
@@ -566,10 +566,19 @@ action :update do
   log_info('Get NIM info for HMC')
   nim_hmc = nim.get_hmc_info()
 
+  # get CEC list
+  log_info('Get NIM info for Cecs')
+  nim_cec = nim.get_cecs_info()
+
   # get the vios info
   log_info('Get NIM info for VIOSes')
   nim_vios = nim.get_nim_clients_info('vios')
   vio_server = VioServer.new
+
+  # Complete the Cec serial in nim_vios dict
+  nim_vios.keys.each do |key|
+    nim_vios[key]['mgmt_cec_serial'] = nim_cec[nim_vios[key]['mgmt_cec']]['serial'] if nim_cec.keys.include?(nim_vios[key]['mgmt_cec'])
+  end
 
   # build array of vios
   log_info("List of VIOS known in NIM: #{nim_vios.keys}")
