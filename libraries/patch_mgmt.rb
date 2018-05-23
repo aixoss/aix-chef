@@ -1286,7 +1286,7 @@ module AIX
               copy = 1
             else
               if line.include? 'stale'
-                msg = '#{vios} rootvg contains stale partitions'
+                msg = "#{vios} rootvg contains stale partitions"
                 STDERR.puts msg
                 STDERR.puts stdout
                 log_warn("[#{vios}] #{msg}")
@@ -1308,14 +1308,13 @@ module AIX
               hdisk_dict[hdisk] = copy
             end
 
-            unless copy_dict.key?(copy)
-              if copy_dict.value?(hdisk)
-                msg = 'rootvg data structure is not compatible with an alt_dik_copy operation'
-                put_error(msg)
-                return vg_info
-              end
-              copy_dict[copy] = hdisk
+            next unless copy_dict.key?(copy)
+            if copy_dict.value?(hdisk)
+              msg = 'rootvg data structure is not compatible with an alt_dik_copy operation'
+              put_error(msg)
+              return vg_info
             end
+            copy_dict[copy] = hdisk
           end
         end
 

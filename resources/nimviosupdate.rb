@@ -706,6 +706,11 @@ action :update do
 
         # actually perform the alternate disk copy
         vios_list.each do |vios|
+          error_label = if vios == vios1
+                          'FAILURE-ALTDCOPY1'
+                        else
+                          'FAILURE-ALTDCOPY2'
+                        end
           converge_by("nim: perform alt_disk_install for vios '#{vios}' on disk '#{altdisk_hash[vios]}'\n") do
             begin
               # unmirror the vg if necessary
@@ -719,11 +724,7 @@ action :update do
                   # ADD status
                   STDERR.puts e.message
                   log_warn("[#{vios}] #{e.message}")
-                  targets_status[vios_key] = if vios == vios1
-                                               'FAILURE-ALTDCOPY1'
-                                             else
-                                               'FAILURE-ALTDCOPY2'
-                                             end
+                  targets_status[vios_key] = error_label
                   put_info("Finish NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
                   break
                 end
@@ -734,11 +735,7 @@ action :update do
             rescue NimAltDiskInstallError => e
               msg = "Failed to start the alternate disk copy on #{altdisk_hash[vios]} of #{vios}: #{e.message}"
               put_error(msg)
-              targets_status[vios_key] = if vios == vios1
-                                           'FAILURE-ALTDCOPY1'
-                                         else
-                                           'FAILURE-ALTDCOPY2'
-                                         end
+              targets_status[vios_key] = error_label
               put_info("Finish NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
               break
             end
@@ -767,11 +764,7 @@ action :update do
               end
               ret = 1
 
-              targets_status[vios_key] = if vios == vios1
-                                           'FAILURE-ALTDCOPY1'
-                                         else
-                                           'FAILURE-ALTDCOPY2'
-                                         end
+              targets_status[vios_key] = error_label
             end
 
             # mirror the vg if necessary
@@ -784,11 +777,7 @@ action :update do
                 # ADD status
                 STDERR.puts e.message
                 log_warn("[#{vios}] #{e.message}")
-                targets_status[vios_key] = if vios == vios1
-                                             'FAILURE-ALTDCOPY1'
-                                           else
-                                             'FAILURE-ALTDCOPY2'
-                                           end
+                targets_status[vios_key] = error_label
                 put_info("Finish NIM alt_disk_install operation using disk '#{altdisk_hash[vios]}' on vios '#{vios}': #{targets_status[vios_key]}.")
                 break
               end
