@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-use_inline_resources
+use_inline_resources # ~FC113
 
 # Support whyrun
 def whyrun_supported?
@@ -22,7 +22,7 @@ def whyrun_supported?
 end
 
 def load_current_resource
-  @current_resource = Chef::Resource::AixSubserver.new(@new_resource.name)
+  @current_resource = new_resource.class.new(@new_resource.name)
   @current_resource.enabled = false
 
   valid_protocols = %w(tcp udp tcp6 udp6)

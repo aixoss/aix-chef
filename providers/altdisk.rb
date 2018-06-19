@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-use_inline_resources
+use_inline_resources # ~FC113
 
 # support whyrun
 def whyrun_supported?
@@ -23,7 +23,7 @@ end
 
 # loading current resource
 def load_current_resource
-  @current_resource = Chef::Resource::AixAltdisk.new(@new_resource.name)
+  @current_resource = new_resource.class.new(@new_resource.name)
   @current_resource.exists = false
 
   # if there is no altdisk_name specified in the recipe the altdisk_name will be the default one

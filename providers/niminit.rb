@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-use_inline_resources
+use_inline_resources # ~FC113
 
 # Support whyrun
 def whyrun_supported?
@@ -22,7 +22,7 @@ def whyrun_supported?
 end
 
 def load_current_resource
-  @current_resource = Chef::Resource::AixNiminit.new(@new_resource.name)
+  @current_resource = new_resource.class.new(@new_resource.name)
 
   # we assume nim client is configured if niminfo exists ...
   # Idea, checking if nimsh running will tell us its runs but we can't get config this way

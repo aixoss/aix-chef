@@ -14,7 +14,7 @@
 # limitations under the License.
 #
 
-use_inline_resources
+use_inline_resources # ~FC113
 
 # support whyrun
 def whyrun_supported?
@@ -23,7 +23,7 @@ end
 
 # loading current resource
 def load_current_resource
-  @current_resource = Chef::Resource::AixBootlist.new(@new_resource.name)
+  @current_resource = new_resource.class.new(@new_resource.name)
 
   so = shell_out!("bootlist -m #{@new_resource.mode} -o")
 

@@ -229,6 +229,9 @@ module AIX
     class NimHmcInfoError < StandardError
     end
 
+    class NimCecsInfoError < StandardError
+    end
+
     class NimLparInfoError < StandardError
     end
 
@@ -245,6 +248,12 @@ module AIX
     end
 
     class AltDiskCleanError < StandardError
+    end
+
+    class UnMirrorError < StandardError
+    end
+
+    class MirrorError < StandardError
     end
 
     class SpLevel
@@ -597,6 +606,55 @@ module AIX
       end
 
       # -----------------------------------------------------------------
+      # Get the list of the cec defined on the nim master and gat their serial number.
+      #
+      #    return a dic with cecs info:
+      #    the name of the cec objects defined on the nim master
+      #    and their associated CEC serial number value
+      #    raise NimCecsInfoError in case of error
+      # -----------------------------------------------------------------
+      def get_cecs_info
+        info_hash = {}
+        obj_key = ''
+        cmd_s = '/usr/sbin/lsnim -t cec -l'
+        log_debug("get_cecs_info: #{cmd_s}")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, stderr, wait_thr|
+          stderr.each_line do |line|
+            STDERR.puts line
+            log_info("[STDERR] #{line.chomp}")
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            raise NimCecsInfoError, "Error: Command \"#{cmd_s}\" returns above error!"
+          end
+
+          stdout.each_line do |line|
+            log_info("[STDOUT] #{line.chomp}")
+            # lpar name
+            if line =~ /^(\S+):/
+              obj_key = Regexp.last_match(1)
+              info_hash[obj_key] = {}
+              next
+            end
+            # cec serial number
+            if line =~ /^\s+serial\s+=\s+(.*)$/
+              info_hash[obj_key]['serial'] = Regexp.last_match(1)
+              next
+            end
+          end
+        end
+
+        log_info('CECs information:')
+        info_hash.keys.each do |key|
+          log_info(key.to_s)
+          info_hash[key].keys.each do |k|
+            log_info("  #{k}: #{info_hash[key][k]}")
+          end
+        end
+        info_hash
+      end
+
+      # -----------------------------------------------------------------
       # Get the hmc info on the nim master
       #
       #    return a dic with hmc info
@@ -644,11 +702,10 @@ module AIX
               next
             end
             # ip
-            if line =~ /^\s+if1\s*=\s*\S+\s*(\S*)\s*.*$/
-              ip = Regexp.last_match(1)
-              info_hash[obj_key]['ip'] = ip
-              next
-            end
+            next unless line =~ /^\s+if1\s*=\s*\S+\s*(\S*)\s*.*$/
+            ip = Regexp.last_match(1)
+            info_hash[obj_key]['ip'] = ip
+            next
           end
         end
 
@@ -694,25 +751,23 @@ module AIX
             end
             # Cstate
             if line =~ /^\s+Cstate\s+=\s+(.*)$/
-              cstate = Regexp.last_match(1)
-              info_hash[obj_key]['cstate'] = cstate
+              info_hash[obj_key]['cstate'] = Regexp.last_match(1)
               next
             end
 
             # For VIOS store the management profile
-            if lpar_type == 'vios'
-              if line =~ /^\s+mgmt_profile1\s+=\s+(.*)$/
-                match_mgmtprof = Regexp.last_match(1)
-                mgmt_elts = match_mgmtprof.split
-                if mgmt_elts.size == 3
-                  info_hash[obj_key]['mgmt_hmc_id'] = mgmt_elts[0]
-                  info_hash[obj_key]['mgmt_vios_id'] = mgmt_elts[1]
-                  info_hash[obj_key]['mgmt_cec_serial'] = mgmt_elts[2]
-                end
+            next unless lpar_type == 'vios'
+            if line =~ /^\s+mgmt_profile1\s+=\s+(.*)$/
+              match_mgmtprof = Regexp.last_match(1)
+              mgmt_elts = match_mgmtprof.split
+              if mgmt_elts.size == 3
+                info_hash[obj_key]['mgmt_hmc_id'] = mgmt_elts[0]
+                info_hash[obj_key]['mgmt_vios_id'] = mgmt_elts[1]
+                info_hash[obj_key]['mgmt_cec_serial'] = mgmt_elts[2]
               end
-              if line =~ /^\s+if1\s+=\s+\S+\s+(\S+)\s+.*$/
-                info_hash[obj_key]['vios_ip'] = Regexp.last_match(1)
-              end
+            end
+            if line =~ /^\s+if1\s+=\s+\S+\s+(\S+)\s+.*$/
+              info_hash[obj_key]['vios_ip'] = Regexp.last_match(1)
             end
           end
         end
@@ -725,6 +780,77 @@ module AIX
           end
         end
         info_hash
+      end
+
+      # -----------------------------------------------------------------
+      #  Run NIM unmirror command
+      #
+      #    raise UnMirrorError in case of error
+      # -----------------------------------------------------------------
+      def perform_unmirror(nim_vios, vios, vg_name)
+        ret = 0
+        success_unmirror = 1
+        cmd_s = "/usr/lpp/bos.sysmgt/nim/methods/c_rsh #{nim_vios[vios]['vios_ip']} \"/usr/sbin/unmirrorvg #{vg_name} 2>&1 \""
+
+        log_info("perform_unmirror: '#{cmd_s}'")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, _stderr, wait_thr|
+          stdout.each_line do |line|
+            STDOUT.puts line
+            log_info("[STDOUT] #{line.chomp}")
+            success_unmirror = 0 if line.include? 'successfully unmirrored'
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            msg = "Failed to unmirror '#{vg_name}' on #{vios}, command \"#{cmd_s}\" returns above error!"
+            raise UnMirrorError, msg
+          end
+        end
+        if success_unmirror == 1
+          msg = "Failed to unmirror '#{vg_name}' on '#{vios}'"
+          put_error(msg)
+          raise UnMirrorError, msg
+        end
+        put_info("Unmirror '#{vg_name}' on '#{vios}' successful.")
+        ret
+      end
+
+      # -----------------------------------------------------------------
+      #  Run NIM mirror command
+      #
+      #    raise MirrorError in case of error
+      # -----------------------------------------------------------------
+      def perform_mirror(nim_vios, vios, vg_name, vg_info)
+        ret = 0
+        copies_h = vg_info[vios]['copy_dict']
+        nb_copies = copies_h.keys.length
+        success_mirror = -1
+        if nb_copies > 1
+          success_mirror = 0
+          cmd_s = "/usr/lpp/bos.sysmgt/nim/methods/c_rsh #{nim_vios[vios]['vios_ip']} \"/usr/sbin/mirrorvg -m -c #{nb_copies} #{vg_name} #{copies_h[2]} \""
+          cmd_s += copies_h[3] if nb_copies > 2
+          cmd_s += ' 2>&1'
+
+          log_info("perform_mirror: '#{cmd_s}'")
+          Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, _stderr, wait_thr|
+            stdout.each_line do |line|
+              STDOUT.puts line
+              log_info("[STDERR] #{line.chomp}")
+              success_mirror = 1 if line.include? 'Failed to mirror the volume group'
+            end
+            unless wait_thr.value.success?
+              stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+              msg = "Failed to mirror '#{vg_name}' on #{vios}, command \"#{cmd_s}\" returns above error!"
+              raise MirrorError, msg
+            end
+          end
+          if success_mirror == 1
+            msg = "Failed to mirror '#{vg_name}' on '#{vios}'"
+            put_error(msg)
+            raise MirrorError, msg
+          end
+        end
+        put_info("Mirror '#{vg_name}' on '#{vios}' successful.") if success_mirror == 0
+        ret
       end
 
       # -----------------------------------------------------------------
@@ -935,13 +1061,12 @@ module AIX
 
             next if line.start_with?('NAME') # skip header
             line.chomp!
-            if line =~ /^(hdisk\S+)\s+(\S+)\s+([0-9]+)/
-              pv_name = Regexp.last_match(1)
-              nim_vios[vios]['free_pvs'][pv_name] = {}
-              nim_vios[vios]['free_pvs'][pv_name]['pvid'] = Regexp.last_match(2)
-              nim_vios[vios]['free_pvs'][pv_name]['size'] = Regexp.last_match(3).to_i
-              log_debug("got free PV #{pv_name} of #{nim_vios[vios]['free_pvs'][pv_name]['size']} MB with PVID: #{nim_vios[vios]['free_pvs'][pv_name]['pvid']}")
-            end
+            next unless line =~ /^(hdisk\S+)\s+(\S+)\s+([0-9]+)/
+            pv_name = Regexp.last_match(1)
+            nim_vios[vios]['free_pvs'][pv_name] = {}
+            nim_vios[vios]['free_pvs'][pv_name]['pvid'] = Regexp.last_match(2)
+            nim_vios[vios]['free_pvs'][pv_name]['size'] = Regexp.last_match(3).to_i
+            log_debug("got free PV #{pv_name} of #{nim_vios[vios]['free_pvs'][pv_name]['size']} MB with PVID: #{nim_vios[vios]['free_pvs'][pv_name]['pvid']}")
           end
         end
 
@@ -1002,6 +1127,240 @@ module AIX
       end
 
       # -----------------------------------------------------------------
+      #    Return the vg pp size
+      #
+      #    Raise ViosCmdError in case of error
+      # -----------------------------------------------------------------
+      def get_vg_pp_size(nim_vios, vios, vg_name)
+        vg_pp_size = -1
+
+        cmd_s = "/usr/lpp/bos.sysmgt/nim/methods/c_rsh #{nim_vios[vios]['vios_ip']} \"/usr/sbin/lsvg #{vg_name}\""
+
+        log_info("get_vg_size: '#{cmd_s}'")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, stderr, wait_thr|
+          stderr.each_line do |line|
+            STDERR.puts line
+            log_info("[STDERR] #{line.chomp}")
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            msg = "Failed to get Volume Group '#{vg_name}' size on #{vios}, command \"#{cmd_s}\" returns above error!"
+            raise ViosCmdError, msg
+          end
+
+          # stdout is like:
+          # parse lsvg outpout to get the size in megabytes:
+          # VG PERMISSION:      read/write               TOTAL PPs:      558 (285696 megabytes)
+          stdout.each_line do |line|
+            log_debug("[STDOUT] #{line.chomp}")
+            line.chomp!
+
+            if line =~ /.*PP SIZE:\s+(\d+)\s+megabyte\(s\).*/
+              vg_pp_size = Regexp.last_match(1).to_i
+              next
+            end
+          end
+        end
+
+        if vg_pp_size == -1
+          msg = "Failed to get '#{vg_name}' pp size on #{vios}"
+          raise ViosCmdError, msg
+        end
+
+        log_info("VG '#{vg_name}'  size =#{vg_pp_size} PPs")
+        vg_pp_size
+      end
+
+      # -----------------------------------------------------------------
+      # Return pv_size (PPs) from vg for hdisk (return -1 in case of
+      # parsing error
+      #
+      #    Raise ViosCmdError in case of command error
+      # -----------------------------------------------------------------
+      def get_pv_size_from_hdisk(nim_vios, vios, vg_name, hdisk)
+        pv_size = -1
+        cmd_s = "/usr/lpp/bos.sysmgt/nim/methods/c_rsh #{nim_vios[vios]['vios_ip']} \"/usr/sbin/lsvg -p #{vg_name}\""
+
+        log_info("get_pv_size_from_hdisk: '#{cmd_s}'")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, stderr, wait_thr|
+          stderr.each_line do |line|
+            STDERR.puts line
+            log_info("[STDERR] #{line.chomp}")
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            msg = "Failed to get Volume Group '#{vg_name}' size on #{vios}, command \"#{cmd_s}\" returns above error!"
+            raise ViosCmdError, msg
+          end
+
+          # stdout is like:
+          # parse lsvg outpout to get the size in megabytes:
+          # rootvg:
+          # PV_NAME           PV STATE          TOTAL PPs   FREE PPs    FREE DISTRIBUTION
+          # hdisk4            active            639         254         126..00..00..00..128
+          stdout.each_line do |line|
+            log_debug("[STDOUT] #{line.chomp}")
+            line.chomp!
+            if line =~ /^(\S+)\s+\S+\s+(\d+)\s+\d+\s+\S+/
+              pv_size = Regexp.last_match(2).to_i
+              break if Regexp.last_match(1) == hdisk
+            end
+          end
+        end
+
+        if pv_size == -1
+          msg = "Failed to get pv size on #{vios} from #{vg_name} for #{hdisk}"
+          put_error(msg)
+        end
+        pv_size
+      end
+
+      # ----------------------------------------------------------------
+      # Check the rootvg
+      # - check if the rootvg is mirrored
+      # - check stale partitions
+      # - calculate the total and used size of the rootvg
+      # return:
+      # hach table with following keys: value
+      # "status":
+      # 0 the rootvg can be saved in a alternate disk copy
+      # 1 otherwise (cannot unmirror then mirror again)
+      # "copy_dict":
+      # dictionary key, value
+      # key: copy number (int)
+      # value: hdiskx
+      # example: {1: 'hdisk4', : 2: 'hdisk8', 3: 'hdisk9'}
+      # "rootvg_size": size in Megabytes (int)
+      # "used_size": size in Megabytes (int)
+      # ----------------------------------------------------------------
+      def check_rootvg(nim_vios, vios)
+        vg_info = {}
+        copy_dict = {}
+        vg_info['status'] = 1
+        vg_info['rootvg_size'] = 0
+        vg_info['used_size'] = 0
+
+        nb_lp = 0
+        copy = 0
+        hdisk_dict = {}
+        hdisk = ''
+
+        # The lsvg -M command lists the physical disks that contain the various logical volumes.
+        cmd_s = "/usr/lpp/bos.sysmgt/nim/methods/c_rsh #{nim_vios[vios]['vios_ip']} \"/usr/sbin/lsvg -M rootvg\""
+        log_info("check_rootvg: '#{cmd_s}'")
+        Open3.popen3({ 'LANG' => 'C' }, cmd_s) do |_stdin, stdout, stderr, wait_thr|
+          stderr.each_line do |line|
+            STDERR.puts line
+            log_info("[STDERR] #{line.chomp}")
+          end
+          unless wait_thr.value.success?
+            stdout.each_line { |line| log_info("[STDOUT] #{line.chomp}") }
+            msg = 'Failed to get the physical disks from rootvg'
+            log_warn("[#{vios}] #{msg}")
+            raise ViosCmdError, "Error: #{msg} on #{vios}, command \"#{cmd_s}\" returns above error!"
+          end
+
+          # lsvg -M rootvg command OK, check mirroring
+          # lists all PV, LV, PP details of a vg (PVname:PPnum LVname: LPnum :Copynum)
+          # hdisk4:453      hd1:101
+          # hdisk4:454      hd1:102
+          # hdisk4:257      hd10opt:1:1
+          # hdisk4:258      hd10opt:2:1
+          # hdisk4:512-639
+          # hdisk8:255      hd1:99:2        stale
+          # hdisk8:256      hd1:100:2       stale
+          # hdisk8:257      hd10opt:1:2
+          # hdisk8:258      hd10opt:2:2
+          # ..
+          # hdisk9:257      hd10opt:1:3
+          stdout.each_line do |line|
+            line.chomp!
+            log_debug("[STDOUT] #{line}")
+            # case: hdisk8:257      hd10opt:1:2
+            if line.strip =~ /^(\S+):\d+\s+\S+:\d+:(\d+)$/
+              hdisk = Regexp.last_match(1)
+              copy = Regexp.last_match(2).to_i
+            elsif line.strip =~ /^(\S+):\d+\s+\S+:\d+$/
+              # case: hdisk8:258      hd10opt:2
+              hdisk = Regexp.last_match(1)
+              copy = 1
+            else
+              if line.include? 'stale'
+                msg = "#{vios} rootvg contains stale partitions"
+                STDERR.puts msg
+                STDERR.puts stdout
+                log_warn("[#{vios}] #{msg}")
+                return vg_info
+              end
+              next
+            end
+
+            nb_lp += 1 if copy == 1
+
+            if hdisk_dict.key?(hdisk)
+              if hdisk_dict[hdisk] != copy
+                msg = 'rootvg data structure is not compatible with an '\
+                      'alt_dik_copy operation (2 copies on the same disk)'
+                put_error(msg)
+                return vg_info
+              end
+            else
+              hdisk_dict[hdisk] = copy
+            end
+
+            next unless copy_dict.key?(copy)
+            if copy_dict.value?(hdisk)
+              msg = 'rootvg data structure is not compatible with an alt_dik_copy operation'
+              put_error(msg)
+              return vg_info
+            end
+            copy_dict[copy] = hdisk
+          end
+        end
+
+        if copy_dict.keys.length > 1
+          if copy_dict.keys.length != hdisk_dict.keys.length
+            msg = "The #{vios} rootvg is partially or commpletly mirrored but somme "\
+                  'lpp copy are spread on several disks. This prevent the '\
+                  'ystem to build an alternate rootvg disk copy'
+            put_error(msg)
+            return vg_info
+          end
+        end
+
+        # the (rootvg) is mirrored then get the size of hdisk from copy1
+        begin
+          pv_size = get_pv_size_from_hdisk(nim_vios, vios, 'rootvg', copy_dict[1])
+        rescue ViosCmdError => e
+          msg = "Failed to get pv size of hdisk from copy1: #{vios}: #{e.message}"
+          put_warn(msg)
+          return vg_info
+        end
+        return vg_info if pv_size == -1
+
+        # get now the rootvg pp size
+        begin
+          pp_size = get_vg_pp_size(nim_vios, vios, 'rootvg')
+        rescue ViosCmdError => e
+          msg = "Failed to get rootvg pp size: #{vios}: #{e.message}"
+          put_warn(msg)
+          return vg_info
+        end
+        return vg_info if pp_size == -1
+
+        total_size = pp_size * pv_size
+        used_size = pp_size * (nb_lp + 1)
+
+        vg_info['status'] = 0
+        vg_info['copy_dict'] = copy_dict
+        vg_info['rootvg_size'] = total_size
+        vg_info['used_size'] = used_size
+
+        log_debug("VG INFO : #{vg_info}\n")
+        vg_info
+      end
+
+      # -----------------------------------------------------------------
       # Find a valid alternate disk that
       # - exists,
       # - is not part of a VG
@@ -1019,12 +1378,20 @@ module AIX
       #
       #    Raise AltDiskFindError in case of error
       # -----------------------------------------------------------------
-      def find_valid_altdisk(nim_vios, vios_list, vios_key, targets_status, altdisk_hash, disk_size_policy)
+      # rubocop:disable Metrics/ParameterLists
+      def find_valid_altdisk(nim_vios, vios_list, vios_key, rootvg_info, targets_status, altdisk_hash, disk_size_policy)
         rootvg_size = 0
         used_size = 0
         used_pv = []
         vios_list.each do |vios|
           err_label = 'FAILURE-ALTDC1'
+
+          # check rootvg
+          if rootvg_info[vios]['status'] != 0
+            targets_status[vios_key] = "#{err_label} wrong rootvg state on #{vios}"
+            put_error("wrong rootvg state on #{vios}")
+            return 1
+          end
 
           # get pv list
           begin
@@ -1036,19 +1403,14 @@ module AIX
 
           # check an alternate disk not already exists
           nim_vios[vios]['pvs'].each do |pv_name, pv|
-            if pv['vg'] == 'altinst_rootvg'
-              targets_status[vios_key] = "#{err_label} an alternate disk (#{pv_name}) already exists on #{vios}"
-              put_error("An alternate rootvg already exists on disk #{pv_name} on #{vios}")
-              return 1
-            end
+            next unless pv['vg'] == 'altinst_rootvg'
+            targets_status[vios_key] = "#{err_label} an alternate disk (#{pv_name}) already exists on #{vios}"
+            put_error("An alternate rootvg already exists on disk #{pv_name} on #{vios}")
+            return 1
           end
 
-          begin
-            rootvg_size, used_size = get_vg_size(nim_vios, vios, 'rootvg')
-          rescue ViosCmdError => e
-            msg = "Failed to find a valid alternate disk on #{vios}: #{e.message}"
-            raise AltDiskFindError, msg
-          end
+          used_size = rootvg_info[vios]['used_size']
+          rootvg_size = rootvg_info[vios]['rootvg_size']
 
           begin
             get_free_pvs(nim_vios, vios)
@@ -1057,7 +1419,7 @@ module AIX
             raise AltDiskFindError, msg
           end
 
-          if nim_vios[vios]['free_pvs'] == {}
+          if nim_vios[vios]['free_pvs'].empty?
             targets_status[vios_key] = "#{err_label} no disk available on #{vios}"
             put_error("No disk available on #{vios}")
             return 1
@@ -1447,7 +1809,7 @@ module AIX
       return 'TL' if oslevel =~ /^([0-9]{4}-[0-9]{2})(|-00|-00-0000)$/
       return 'SP' if oslevel =~ /^([0-9]{4}-[0-9]{2}-[0-9]{2})(|-[0-9]{4})$/
       # else raise exception
-      raise InvalidOsLevelProperty, 'Invalid Oslevel: "#{oslevel}"'
+      raise InvalidOsLevelProperty, "Invalid Oslevel: '#{oslevel}'"
     end
 
     # -----------------------------------------------------------------

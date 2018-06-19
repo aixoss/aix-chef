@@ -17,7 +17,7 @@
 
 require 'etc'
 
-use_inline_resources
+use_inline_resources # ~FC113
 
 # Support whyrun
 def whyrun_supported?
@@ -25,7 +25,7 @@ def whyrun_supported?
 end
 
 def load_current_resource
-  @current_resource = Chef::Resource::AixSubsystem.new(@new_resource.name)
+  @current_resource = new_resource.class.new(@new_resource.name)
   @current_resource.exists = false
   so = shell_out("lssrc -S -s #{@new_resource.subsystem_name}")
   return if so.stdout.lines.empty?

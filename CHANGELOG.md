@@ -2,6 +2,30 @@
 
 This file is used to list changes made in each version of the aix cookbook.
 
+## 2.3.1 (2018-05-16)
+
+- Don't .to_s strings
+- Use the chef shell_out mixin vs. mixlib_shellout
+- Properties that are Strings default to nil so we can remove the nil defaults
+- Remove empty load_current_value method which isn't doing anything
+- Load current resource properly instead of tracking state in properties
+- Remove redundant default_action
+- Use new_resource instead of @new_resource in several resources
+- Fix strings in the examples to properly interpolate
+- Fix error message to actually output the error
+- Update the rubocop rules we disable
+- Resolve FC019 warnings in the examples
+- Disable FC0113 for now since we still support Chef 12
+- Fix loading current_resource in the inittab resource
+
+## 2.3.0 (2018-05-10)
+
+- Resolve incompatibilities with Chef 13 & 14
+- Removed Chefspec matchers which are autogenerted by ChefSpec now
+- Added a new nimviosupdate resource
+- Update etchosts resource to update aliases if they are changed
+- Fixes to aix_chsec to use the name property of the resource and to better handle filesystem names
+
 ## 2.2.0 (2017-12-21)
 
 - Convert nimclient and toolboxpackage to custom resources
